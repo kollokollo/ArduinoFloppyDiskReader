@@ -184,7 +184,7 @@ procedure dc(a$)
   if a$="?"
     a$=CHR$(INP(#1))+CHR$(INP(#1))+CHR$(INP(#1))+CHR$(INP(#1))
     PRINT a$
-    if a$<>"V.1.05" and a$<>"V.1.04"
+    if a$<>"V1.5" and a$<>"V1.4"
       PRINT "ERROR: Arduino Firmware is not correct."
       CLOSE
       QUIT
@@ -296,9 +296,10 @@ function decode_mfm2$(off,len,mfm)
 '  print "Decoding from offset ";off
 '  print mid$(s$,i,16)
   do
-    a$=MID$(s$,i,2)
+    ' This is a faster version of: a$=MID$(s$,i,2)
+    a$=CHR$(PEEK(VARPTR(s$)+i-1) AND 255)+CHR$(PEEK(VARPTR(s$)+i+0) AND 255)
     if a$="00"
-      print "ERROR or END of sequence"
+     ' print "ERROR or END of sequence"
       exit if true
     else if a$="01"
       u$=u$+STR$(mfm)
@@ -317,17 +318,16 @@ function decode_mfm2$(off,len,mfm)
       else
         u$=u$+"00"
 	mfm=0
-	PRINT "--sync--";chr$(13);
-      endif
-    endif
-    while len(u$)>=8
+	PRINT COLOR(35,1);"s";COLOR(1,0);
+      ENDIF
+    ENDIF
+    WHILE LEN(u$)>=8
       a$=left$(u$,8)
       u$=right$(u$,len(u$)-8)
-      a=VAL("%"+a$)
-      data$=data$+chr$(a)
-    WEND
-    EXIT IF LEN(data$)>=len
-    ADD i,2
+      data$=data$+CHR$(VAL("%"+a$))
+    wend
+    exit if len(data$)>=len
+    add i,2
   LOOP
   RETURN data$
 ENDFUNCTION
