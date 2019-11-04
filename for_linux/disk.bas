@@ -14,22 +14,82 @@
 ' but the error rate is still too high.
 '
 
+i=1
 maxtrack=82
 maxsector=0
 
-OPEN "UX:2000000:8:N:1:CTS:DTR",#1,"/dev/ttyUSB0"
-PAUSE 3
+docheck=TRUE
+device$="/dev/ttyUSB0"
+path$="."
+
+
+WHILE LEN(PARAM$(i))
+  IF LEFT$(PARAM$(i))="-"
+    IF param$(i)="--help" OR PARAM$(i)="-h"
+      @intro
+      @using
+    ELSE IF PARAM$(i)="--version"
+      @intro
+      QUIT
+    ELSE IF PARAM$(i)="--nocheck"
+      docheck=FALSE
+    ELSE IF PARAM$(i)="--check"
+      docheck=TRUE
+    ELSE IF PARAM$(i)="-o"
+      INC i
+      IF LEN(PARAM$(i))
+        path$=PARAM$(i)
+      ENDIF
+    ELSE IF PARAM$(i)="-d" or PARAM$(i)="--device"
+      INC i
+      IF LEN(PARAM$(i))
+        device$=PARAM$(i)
+      ENDIF
+    ELSE
+      collect$=collect$+PARAM$(i)+" "
+    ENDIF
+  ELSE
+  '  inputfile$=PARAM$(i)
+  '  IF NOT EXIST(inputfile$)
+  '    PRINT "floppydiskreader: "+inputfile$+": file or path not found"
+  '    CLR inputfile$
+  '  ENDIF
+  ENDIF
+  INC i
+WEND
+
+IF NOT EXIST(path$)
+  PRINT "path ";path$;" does not exist."
+  IF LEFT$(path$)<>"."
+    PRINT "--> ";path$+"/"
+    MKDIR path$
+  ELSE
+    PRINT "ERROR --> QUIT"
+    QUIT
+  ENDIF
+ENDIF
+
+IF NOT EXIST(device$)
+  PRINT "ERROR: device ";device$;" does not exist."
+  PRINT "Floppy reader is not accessible."
+  PRINT "ERROR --> QUIT"
+  QUIT
+ENDIF
+
+PRINT "<--> ";device$
+OPEN "UX:2000000:8:N:1:CTS:DTR",#1,device$
+PAUSE 2
 @dc("?")   ! Say Hello
-PAUSE 1
+PAUSE 0.1
 @dc("+")   ! Switch on Motor
-PAUSE 0.5
+PAUSE 0.3
 @dc(".")   ! Seek to Track 0 (HOME)
-PAUSE 1
+PAUSE 0.5
 @dc("M")   ! Measure and let firmware decide about HD/DD
-PAUSE 6
+PAUSE 5
 ' Todo: use the measuement results to decide if it is a HD Disk.
 '@dc("D")   ! HD-Disk ("H" or "D")
-'PAUSE 0.5
+
 
 FOR track=0 TO maxtrack-1
   FOR side=0 TO 1
@@ -38,30 +98,37 @@ FOR track=0 TO maxtrack-1
       retry=0
       WHILE retry>=0 AND retry<10
         dec retry
-        if retry>=0
-          PRINT "retry=";retry
-        endif
         IF track<10
           @dc("#0"+str$(track))
         ELSE
           @dc("#"+str$(track))
         ENDIF
-        PAUSE 0.3
         IF side=1
           @dc("[")
         ELSE
           @dc("]")
         ENDIF
-        PAUSE 0.3
-        @dc("<")
-        PAUSE 0.3
+        PAUSE 0.1
+        @dc("<"+chr$(1))
         IF LEN(t$)>9300
-          if @check_track(t$,track,side)>0
+           if docheck
+  	     cc=@check_track(t$,track,side)
+           else
+	     cc=1
+	   endif
+           if cc>0
             PRINT color(34,1);"--> ";name$;color(1,0)
             bsave name$,varptr(t$),len(t$)
 	    exit if true
 	  else
 	    PRINT color(31,1);"###### retry / sector";color(1,0)
+            si=0
+	    repeat
+  	      badname$=name$+".bad."+str$(si,3,3,1)
+	      inc si
+	    until not exist(badname$)
+            PRINT color(35,1);"--> ";badname$;color(1,0)
+            bsave badname$,varptr(t$),len(t$)
 	    add retry,2
 	  endif
         else
@@ -72,17 +139,34 @@ FOR track=0 TO maxtrack-1
     endif
   next side
 next track
-
-pause 4
 print "closing"
-
 s:
 @dc(".")   ! Seek HOME
-PAUSE 1
 @dc("-")   ! Switch off motor
-
 CLOSE
 QUIT
+
+PROCEDURE intro
+  PRINT "Floppy Disk reader V.1.27 (c) Markus Hoffmann 2019"
+  VERSION
+RETURN
+PROCEDURE using
+  PRINT "Usage: floppy [options] path "
+  PRINT "Options:"
+  PRINT "  -h, --help               Display this information"
+  PRINT "  -d <device>              Use this device (default: ";device$;")"
+  PRINT "  --device <device>        Use this device (default: ";device$;")"
+  PRINT "  --check                  check integrity of tracks (default)"
+  PRINT "  --nocheck                do not check integrity of tracks"
+  PRINT "  -o <path>                Place the output into <path>"
+RETURN
+
+
+
+
+
+
+
 
 ' Do a command in the Firmware
 procedure dc(a$)
@@ -91,14 +175,20 @@ procedure dc(a$)
   flush
   print #1,a$;
   FLUSH #1
-  a=inp(#1)-asc("0")
-  if a=0
+  a=INP(#1)-ASC("0")
+  IF a=0
     print "ERROR"
   else
     print "OK."
   endif
   if a$="?"
-    print chr$(inp(#1));chr$(inp(#1));chr$(inp(#1));chr$(inp(#1))
+    a$=CHR$(INP(#1))+CHR$(INP(#1))+CHR$(INP(#1))+CHR$(INP(#1))
+    PRINT a$
+    if a$<>"V.1.05" and a$<>"V.1.04"
+      PRINT "ERROR: Arduino Firmware is not correct."
+      CLOSE
+      QUIT
+    endif
   else if a$="M"
     print chr$(inp(#1));chr$(inp(#1));chr$(inp(#1));
     while inp?(#1)
@@ -106,23 +196,8 @@ procedure dc(a$)
       print CHR$(a);
       FLUSH
     WEND
-  else if a$="<"
+  else if left$(a$)="<"
     t=timer
-    do
-      a$=INKEY$
-      if timer-t>0.5+random(250)/100
-        a$=chr$(10)
-      endif
-      if len(a$)
-        print #1,a$;
-        FLUSH #1
-        exit if len(a$)
-      endif
-      PAUSE 0.1
-      while inp?(#1)
-        a=INP(#1)
-      wend
-    loop
     print "wait for first byte"
     t$=chr$(inp(#1))
     nochmal:
