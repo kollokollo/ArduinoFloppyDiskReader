@@ -11,7 +11,6 @@
 DIM bad_tracks(83*2)
 ARRAYFILL bad_tracks(),0
 
-sectorstatus$=SPACE$(82*2*20)
 DIM sectorinhalt$(82,2,20)
 
 DIM sector$(20)
@@ -23,6 +22,10 @@ dodelete=1
 
 path$="Disk11"
 ofile$="out.img"
+
+logfile$="out.log"
+sectormap$="secmap.dat"
+
 i=1
 WHILE LEN(PARAM$(i))
   IF LEFT$(PARAM$(i))="-"
@@ -40,19 +43,30 @@ WHILE LEN(PARAM$(i))
   INC i
 WEND
 
+if right$(path$)="/"
+  path$=left$(path$,len(path$)-1)
+endif
+sectormap$=path$+"/sectormap.dat"
+logfile$=path$+"/out.log"
+
 verbose=0
 
 IF EXIST(ofile$)
   PRINT ofile$,"existiert schon.  QUIT"
   QUIT
 ENDIF
+PRINT "--> "+logfile$
+OPEN "O",#3,logfile$
+
+
 PRINT "--> "+ofile$
-open "O",#2,ofile$
+OPEN "O",#2,ofile$
+PRINT "--> "+sectormap$
+OPEN "O",#4,sectormap$
 for track=0 to 81
-  POKE VARPTR(sectorstatus$)+track*2*20+side*20+19,10
   for side=0 to 1
     trackinhalt$=STRING$(20*512/8,"-empty- ")
-    cc$="--------------------"
+    cc$="-------------------- "
     name$="track"+str$(track,3,3,1)+chr$(ASC("a")+side)+".bin"
     name$=path$+"/"+name$
     PRINT AT(1,1);chr$(27);"[2K";
@@ -112,36 +126,46 @@ for track=0 to 81
       PRINT global_cc$;COLOR(1,0);chr$(27);"[K"
       BEEP
   '    PAUSE 10
-    endif
+    ENDIF
+    IF side=0
+      PRINT #4,STR$(track,2,2,1);" ";global_cc$;" ";str$(bad_tracks(2*track+side),2,2);" ";
+    ELSE
+      PRINT #4,global_cc$;" ";str$(bad_tracks(2*track+side),2,2)
+    ENDIF
+    FLUSH #4
     ' MEMDUMP VARPTR(trackinhalt$),len(trackinhalt$)
-    if len(trackinhalt$)<512*maxsector
-      print COLOR(41,1);"ERROR trackinhalt too small.";COLOR(1,0)
+    IF LEN(trackinhalt$)<512*maxsector
+      PRINT COLOR(41,1);"ERROR trackinhalt too small.";COLOR(1,0)
       QUIT
-    endif
-    PRINT #2,LEFT$(trackinhalt$,512*maxsector);
-    if omaxsector<>-1 AND omaxsector<>maxsector
+    ENDIF
+    IF omaxsector<>-1 AND omaxsector<>maxsector
       PRINT COLOR(41,1);"WARNING: maxsector has changed: ";omaxsector;" --> ";maxsector;COLOR(1,0)
+' quit
+' maxsector=10
      ' PAUSE 5
-    endif
-    if lof(#2)/512/maxsector<>INT(lof(#2)/512/maxsector)
-      PRINT COLOR(41,1);"Something is wrong with file-len: ";lof(#2);COLOR(1,0)
-      QUIT
-    endif
+    ENDIF
+    IF LOF(#2)/512/maxsector<>INT(LOF(#2)/512/maxsector)
+      PRINT COLOR(41,1);"Something is wrong with file-len: ";LOF(#2);COLOR(1,0)
+    ENDIF
+    PRINT #2,LEFT$(trackinhalt$,512*maxsector);
+
     PRINT "--> ";chr$(27);"[J";lof(#2);" Bytes."
     omaxsector=maxsector
-  next side
-next track
-close #2
+  NEXT side
+NEXT track
+CLOSE #2
 PRINT chr$(27);"[J";
 FOR i=0 to 82-1
   FOR j=0 to 1
     IF bad_tracks(2*i+j)=-1
       PRINT "Bad Track ",i,j,bad_tracks(2*i+j)
+      PRINT #3,"Bad Track ",i,j,bad_tracks(2*i+j)
       IF dodelete
         name$="track"+STR$(i,3,3,1)+CHR$(ASC("a")+j)+".bin"
         name$=path$+"/"+name$
         IF EXIST(name$)
           PRINT "REMOVE"
+          PRINT #3,"REMOVE"
 	  si=0
 	  REPEAT
   	    badname$=name$+".bad."+STR$(si,3,3,1)
@@ -152,25 +176,24 @@ FOR i=0 to 82-1
       ENDIF
     ELSE if bad_tracks(2*i+j)=1
       PRINT "Bad Track ",i,j,bad_tracks(2*i+j)," was repaired."
+      PRINT #3,"Bad Track ",i,j,bad_tracks(2*i+j)," was repaired."
     ENDIF
   NEXT j
 NEXT i
 
-BSAVE path$+"/sectorstatus",VARPTR(sectorstatus$),len(sectorstatus$)
 OPEN "O",#1,path$+"sectors"
 FOR i=0 to 82-1
   FOR j=0 to 1
     FOR k=0 to 20-1
-      if sectorinhalt$(i,j,k)<>""
-        seek #1,512*(k+82*j+82*2*i)
-        print #1,sectorinhalt$(i,j,k);
-      ELSE
-
+      IF sectorinhalt$(i,j,k)<>""
+        SEEK #1,512*(k+82*j+82*2*i)
+        PRINT #1,sectorinhalt$(i,j,k);
       ENDIF
     NEXT k
   NEXT j
 NEXT i
 CLOSE #1
+CLOSE #3,#4
 QUIT
 
 FUNCTION check_track$(tt$,trk,sid)
@@ -246,9 +269,7 @@ FUNCTION get_sector$(sec)
       c%=CRC16(se$)
       IF c%<>0xa886
         PRINT COLOR(33,1);"CRC-ERROR.";COLOR(1,0)
-	POKE VARPTR(sectorstatus$)+track*2*20+side*20+sector,ASC("-")
       ELSE
-        POKE VARPTR(sectorstatus$)+track*2*20+side*20+sector,ASC(".")
 	sectorinhalt$(track,side,sector)=LEFT$(se$,256*size)
         print COLOR(32,1);"OK.";COLOR(1,0)
 	sec_status=1
@@ -260,45 +281,43 @@ FUNCTION get_sector$(sec)
 ENDFUNCTION
 
 
-function decode_mfm2$(off,len,mfm)
-  local u$,mfm,data$,mflong,i
+FUNCTION decode_mfm2$(off,len,mfm)
+  LOCAL u$,mfm,data$,mflong,i
   u$=""
   data$=""
   i=off
-'  print "Decoding from offset ";off
-'  print mid$(s$,i,16)
-  do
+  DO
     ' This is a faster version of: a$=MID$(s$,i,2)
     a$=CHR$(PEEK(VARPTR(s$)+i-1) AND 255)+CHR$(PEEK(VARPTR(s$)+i+0) AND 255)
-    if a$="00"
+    IF a$="00"
      ' print "ERROR or END of sequence"
-      exit if true
-    else if a$="01"
+      BREAK
+    ELSE IF a$="01"
       u$=u$+STR$(mfm)
-    else if a$="10"
-      if mfm<>0
+    ELSE IF a$="10"
+      IF mfm<>0
         u$=u$+"0"
 	mfm=0
-      else
+      ELSE
         u$=u$+"01"
 	mfm=1
-      endif
-    else if a$="11"
-      if mfm<>0
+      ENDIF
+    ELSE IF a$="11"
+      IF mfm<>0
         u$=u$+"01"
 	mfm=1
-      else
+      ELSE
         u$=u$+"00"
 	mfm=0
 	PRINT COLOR(35,1);"s";COLOR(1,0);
       ENDIF
     ENDIF
     WHILE LEN(u$)>=8
-      a$=left$(u$,8)
-      u$=right$(u$,len(u$)-8)
+      a$=LEFT$(u$,8)
+      u$=RIGHT$(u$,LEN(u$)-8)
       data$=data$+CHR$(VAL("%"+a$))
-    wend
-    exit if len(data$)>=len
+    WEND
+    EXIT IF LEN(data$)>=len
     add i,2
   LOOP
   RETURN data$
