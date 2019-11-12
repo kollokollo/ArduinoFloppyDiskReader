@@ -1,20 +1,22 @@
 #!/usr/bin/xbasic
-' Decode MFM coded Track information (from an Floppy Disk).
-' This can be used with DD Disks (Atari ST or MS-DOS PC)
-' (c) by Markus Hoffmann 2019
+' Decode MFM coded Track information (from a Floppy Disk).
+' This can be used with DD or HD Disks (Atari ST or MS-DOS PC)
+' 
 ' 
 ' It tries to read up to 82 Tracks, 2 sides and tries to locate and decode 
 ' up to 20 Sectors on each track. (Sizes 512 Bytes)
 ' 
+' Finally an image file is created, which can be mounted as a file system.
 '
+' (c) by Markus Hoffmann 2019 written in X11-Basic
 '
 DIM bad_tracks(83*2)
 ARRAYFILL bad_tracks(),0
 
 DIM sectorinhalt$(82,2,20)
-
 DIM sector$(20)
 
+maxtrack=82         ! maximum number of tracks
 maxsector=9
 omaxsector=-1
 dodelete=1
@@ -29,12 +31,18 @@ sectormap$="secmap.dat"
 i=1
 WHILE LEN(PARAM$(i))
   IF LEFT$(PARAM$(i))="-"
-    IF PARAM$(i)="-o"
+    IF param$(i)="--help" OR PARAM$(i)="-h"
+      @intro
+      @using
+    ELSE IF PARAM$(i)="--version"
+      @intro
+      QUIT
+    ELSE IF PARAM$(i)="-o"
       INC i
       IF LEN(PARAM$(i))
         ofile$=PARAM$(i)
       ENDIF
-    ELSE  
+    ELSE
       collect$=collect$+PARAM$(i)+" "
     ENDIF
   ELSE
@@ -43,9 +51,9 @@ WHILE LEN(PARAM$(i))
   INC i
 WEND
 
-if right$(path$)="/"
-  path$=left$(path$,len(path$)-1)
-endif
+IF RIGHT$(path$)="/"
+  path$=LEFT$(path$,LEN(path$)-1)
+ENDIF
 sectormap$=path$+"/sectormap.dat"
 logfile$=path$+"/out.log"
 
@@ -57,80 +65,78 @@ IF EXIST(ofile$)
 ENDIF
 PRINT "--> "+logfile$
 OPEN "O",#3,logfile$
-
-
 PRINT "--> "+ofile$
 OPEN "O",#2,ofile$
 PRINT "--> "+sectormap$
 OPEN "O",#4,sectormap$
-for track=0 to 81
-  for side=0 to 1
+FOR track=0 TO maxtrack-1
+  FOR side=0 TO 1
     trackinhalt$=STRING$(20*512/8,"-empty- ")
     cc$="-------------------- "
-    name$="track"+str$(track,3,3,1)+chr$(ASC("a")+side)+".bin"
+    name$="track"+STR$(track,3,3,1)+CHR$(ASC("a")+side)+".bin"
     name$=path$+"/"+name$
     PRINT AT(1,1);chr$(27);"[2K";
-    if exist(name$)
+    IF EXIST(name$)
       PRINT COLOR(35,1);"<-- ";name$,COLOR(1,0);
       OPEN "I",#1,name$
       t$=INPUT$(#1,LOF(#1))
       CLOSE #1
-      print len(t$)
+      PRINT LEN(t$)
       cc$=@check_track$(t$,track,side)
-    endif
+    ENDIF
     done=1
-    for i=0 to maxsector-1
+    FOR i=0 to maxsector-1
       IF PEEK(VARPTR(cc$)+i)=ASC(".")
 	BMOVE VARPTR(SECTOR$(i)),VARPTR(trackinhalt$)+i*512,512
-      else
+      ELSE
         done=0
-      endif
-    next i
-    print cc$
+      ENDIF
+    NEXT i
+    PRINT cc$
     global_cc$=cc$
     si=0
-    while done=0
+    WHILE done=0
       bad_tracks(2*track+side)=1
 
       ' Now try to read some sectors from the bad track files. 
       badname$=name$+".bad."+STR$(si,3,3,1)
-      if exist(badname$)
+      IF EXIST(badname$)
         PRINT COLOR(35,1);"<-- ";badname$,COLOR(1,0);
         OPEN "I",#1,badname$
         t$=INPUT$(#1,LOF(#1))
         CLOSE #1
-        print len(t$)
+        PRINT LEN(t$)
         cc$=@check_track$(t$,track,side)
-	print global_cc$,cc$
-	inc si
+	PRINT global_cc$,cc$
+	INC si
         done=1
-        for i=0 to maxsector-1
+        FOR i=0 TO maxsector-1
           IF PEEK(VARPTR(global_cc$)+i)<>ASC(".")
 	    IF PEEK(VARPTR(cc$)+i)=ASC(".")
 	      BMOVE VARPTR(SECTOR$(i)),VARPTR(trackinhalt$)+i*512,512
 	      POKE VARPTR(global_cc$)+i,PEEK(VARPTR(cc$)+i)
 	      print "insert ";i,global_cc$
-	    else 
+	    ELSE
               done=0
-	    endif    
-          endif
-        next i
-      else
-	break
-      endif
-    wend
-    if done=0
+	    ENDIF
+          ENDIF
+        NEXT i
+      ELSE
+	BREAK
+      ENDIF
+    WEND
+    IF done=0
       bad_tracks(2*track+side)=-1
-      print COLOR(41,1);"ERROR: Track ";track;"/";side;chr$(27);"[K"
-      PRINT "WARNING: Track data is still incomplete...";chr$(27);"[K"
-      PRINT global_cc$;COLOR(1,0);chr$(27);"[K"
+      PRINT COLOR(41,1);"ERROR: Track ";track;"/";side;CHR$(27);"[K"
+      PRINT "WARNING: Track data is still incomplete...";CHR$(27);"[K"
+      PRINT global_cc$;COLOR(1,0);CHR$(27);"[K"
       BEEP
   '    PAUSE 10
     ENDIF
     IF side=0
-      PRINT #4,STR$(track,2,2,1);" ";global_cc$;" ";str$(bad_tracks(2*track+side),2,2);" ";
+      PRINT #4,STR$(track,2,2,1);" ";global_cc$;" ";STR$(bad_tracks(2*track+side),2,2);" ";
     ELSE
-      PRINT #4,global_cc$;" ";str$(bad_tracks(2*track+side),2,2)
+      PRINT #4,global_cc$;" ";STR$(bad_tracks(2*track+side),2,2)
     ENDIF
     FLUSH #4
     ' MEMDUMP VARPTR(trackinhalt$),len(trackinhalt$)
@@ -140,22 +146,19 @@ for track=0 to 81
     ENDIF
     IF omaxsector<>-1 AND omaxsector<>maxsector
       PRINT COLOR(41,1);"WARNING: maxsector has changed: ";omaxsector;" --> ";maxsector;COLOR(1,0)
-' quit
-' maxsector=10
      ' PAUSE 5
     ENDIF
     IF LOF(#2)/512/maxsector<>INT(LOF(#2)/512/maxsector)
       PRINT COLOR(41,1);"Something is wrong with file-len: ";LOF(#2);COLOR(1,0)
     ENDIF
     PRINT #2,LEFT$(trackinhalt$,512*maxsector);
-
     PRINT "--> ";chr$(27);"[J";lof(#2);" Bytes."
     omaxsector=maxsector
   NEXT side
 NEXT track
 CLOSE #2
 PRINT chr$(27);"[J";
-FOR i=0 to 82-1
+FOR i=0 to maxtrack-1
   FOR j=0 to 1
     IF bad_tracks(2*i+j)=-1
       PRINT "Bad Track ",i,j,bad_tracks(2*i+j)
@@ -182,7 +185,7 @@ FOR i=0 to 82-1
 NEXT i
 
 OPEN "O",#1,path$+"sectors"
-FOR i=0 to 82-1
+FOR i=0 to maxtrack-1
   FOR j=0 to 1
     FOR k=0 to 20-1
       IF sectorinhalt$(i,j,k)<>""
@@ -196,10 +199,21 @@ CLOSE #1
 CLOSE #3,#4
 QUIT
 
+PROCEDURE intro
+  PRINT "Floppy Disk raw data MFM decoder V.1.27 (c) Markus Hoffmann 2019"
+  VERSION
+RETURN
+PROCEDURE using
+  PRINT "Usage: floppydecode [options] path "
+  PRINT "Options:"
+  PRINT "  -h, --help               Display this information"
+  PRINT "  -o <file>                Place the output into file [";ofile$;"]"
+RETURN
+
 FUNCTION check_track$(tt$,trk,sid)
   LOCAL i,s$,a$,ok$
   ok$=SPACE$(21)
-  PRINT chr$(27);"[2K";"check track #";trk;"/";sid
+  PRINT CHR$(27);"[2K";"check track #";trk;"/";sid
   s$=""
   FOR i=0 TO LEN(tt$)-1
     s$=s$+BIN$(PEEK(VARPTR(tt$)+i) AND 255,8)
@@ -216,8 +230,8 @@ FUNCTION check_track$(tt$,trk,sid)
           PRINT COLOR(33,1);"CRC-ERROR: Sektor ";i+1;COLOR(1,0)  
 	  a$=STRING$(512/8,"-ERROR- ")
 	ENDIF
-      ELSE 
-        PRINT COLOR(33,1);"ERROR: Sektor ";i+1;"/";maxsector;" missig!";COLOR(1,0)  
+      ELSE
+        PRINT COLOR(33,1);"ERROR: Sektor ";i+1;"/";maxsector;" missig!";COLOR(1,0)
         POKE VARPTR(ok$)+i,ASC("-")
 	a$=STRING$(512/8,"-MISSING")
       ENDIF
@@ -265,13 +279,13 @@ FUNCTION get_sector$(sec)
       EXIT IF off=LEN(d2$)
       found=1
       se$=@decode_mfm2$(off,256*size+2,1)
-      ' memdump varptr(se$),len(se$)
+      ' MEMDUMP VARPTR(se$),LEN(se$)
       c%=CRC16(se$)
       IF c%<>0xa886
         PRINT COLOR(33,1);"CRC-ERROR.";COLOR(1,0)
       ELSE
 	sectorinhalt$(track,side,sector)=LEFT$(se$,256*size)
-        print COLOR(32,1);"OK.";COLOR(1,0)
+        PRINT COLOR(32,1);"OK.";COLOR(1,0)
 	sec_status=1
       ENDIF
     ENDIF
@@ -318,7 +332,7 @@ FUNCTION decode_mfm2$(off,len,mfm)
       data$=data$+CHR$(VAL("%"+a$))
     WEND
     EXIT IF LEN(data$)>=len
-    add i,2
+    ADD i,2
   LOOP
   RETURN data$
 ENDFUNCTION
